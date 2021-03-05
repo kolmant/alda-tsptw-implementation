@@ -8,9 +8,12 @@ import (
 	"first-try-tsptw/entities"
 	"first-try-tsptw/utils"
 	"fmt"
+	_ "net/http/pprof"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/yourbasic/bit"
 )
 
 type TimeWindows struct {
@@ -21,22 +24,25 @@ type TimeWindows struct {
 type Solution struct {
 	Graph       entities.Graph
 	TimeWindows []TimeWindows
-	N           int16
+	N           int
 }
 
 type Set struct {
-	Mapa   map[int16]bool
+	Mapa   *bit.Set
 	strRep string
-	N      int16
-	Elems  int16
+	N      int
+	Elems  int
 	Camino string
 }
 
 func (e *Set) Copy() Set {
-	copiedMap := make(map[int16]bool, len(e.Mapa))
-	for k, v := range e.Mapa {
-		copiedMap[k] = v
-	}
+	copiedMap := new(bit.Set)
+
+	e.Mapa.Visit(func(n int) (skip bool) {
+		copiedMap.Add(n)
+
+		return false
+	})
 
 	return Set{
 		Mapa:   copiedMap,
@@ -47,14 +53,15 @@ func (e *Set) Copy() Set {
 }
 
 type Epsilon struct {
-	Set Set
-	I   int16
+	Set *Set
+	I   int
 	T   float32
 }
 
 func (e *Epsilon) Copy() Epsilon {
+	set := e.Set.Copy()
 	return Epsilon{
-		Set: e.Set.Copy(),
+		Set: &set,
 		I:   e.I,
 		T:   e.T,
 	}
@@ -68,14 +75,14 @@ type TType struct {
 
 type FType struct {
 	mapa   map[string]float32
-	N      int16
+	N      int
 	Result map[string][]TType
 }
 
-func (f *FType) Set(s *Set, i int16, t float32, value float32) {
+func (f *FType) Set(s *Set, i int, t float32, value float32) {
 	f.mapa[fmt.Sprintf("%s_%d_%f", s.GetStrRep(), i, t)] = value
 	if s.Elems == f.N {
-		key := fmt.Sprintf("%s_%d", s.GetStrRep(), i)
+		key := fmt.Sprintf("%s_%d", s.GetLargeStrRep(), i)
 		res, ok := f.Result[key]
 		if !ok {
 			res = make([]TType, 0)
@@ -85,7 +92,7 @@ func (f *FType) Set(s *Set, i int16, t float32, value float32) {
 	}
 }
 
-func (f *FType) Get(s *Set, i int16, t float32) float32 {
+func (f *FType) Get(s *Set, i int, t float32) float32 {
 	return f.mapa[fmt.Sprintf("%s_%d_%f", s.GetStrRep(), i, t)]
 }
 
@@ -96,20 +103,23 @@ func (s *Set) GetStrRep() string {
 
 	return s.strRep
 }
-
-func (s *Set) GenerateStrRep() {
+func (s *Set) GetLargeStrRep() string {
 	var sb strings.Builder
-	var i int16
+	var i int
 	for i = 0; i < s.N; i++ {
-		fmt.Fprintf(&sb, "%t_", s.Mapa[i])
+		fmt.Fprintf(&sb, "%t_", s.Mapa.Contains(i))
 	}
-	s.strRep = sb.String()
+	return sb.String()
 }
 
-func (s Set) Remove(i int16) (Set, bool) {
-	_, ok := s.Mapa[i]
+func (s *Set) GenerateStrRep() {
+	s.strRep = s.Mapa.String()
+}
+
+func (s Set) Remove(i int) (Set, bool) {
+	ok := s.Mapa.Contains(i)
 	if ok {
-		s.Mapa[i] = false
+		s.Mapa.Delete(i)
 		s.GenerateStrRep()
 		s.Elems--
 	}
@@ -117,20 +127,22 @@ func (s Set) Remove(i int16) (Set, bool) {
 	return s, ok
 }
 
-func (s Set) Add(i int16) (Set, bool) {
-	_, ok := s.Mapa[i]
+func (s Set) Add(i int) (Set, bool) {
+	ok := s.Mapa.Contains(i)
+	newSet := s.Mapa
 	if !ok {
-		s.Mapa[i] = true
+		newSet = s.Mapa.Add(i)
 		s.GenerateStrRep()
 		s.Elems++
 		s.Camino = fmt.Sprintf("%s%d ", s.Camino, i)
 	}
+	s.Mapa = newSet
 
 	return s, !ok
 }
 
 func main() {
-	var i, j, n int16
+	var i, j, n int
 	var start, end float32
 	fmt.Scanf("%d", &n)
 	distances := make([][]float32, n)
@@ -166,12 +178,12 @@ func main() {
 	defer cancel()
 
 	_, _ = executeWithTimeout(context.Background(), "solve", func() {
-		solution.Solve()
+		solution.Solve(n > 5)
 	}, 20*time.Minute)
 }
 
-func (s *Solution) Prune(i int16, wb *sync.WaitGroup) {
-	var j int16
+func (s *Solution) Prune(i int, wb *sync.WaitGroup) {
+	var j int
 	for j = 0; j < s.N; j++ {
 		travelTimeI := s.TimeWindows[i]
 		travelTimeJ := s.TimeWindows[j]
@@ -183,27 +195,28 @@ func (s *Solution) Prune(i int16, wb *sync.WaitGroup) {
 	wb.Done()
 }
 
-func (s *Solution) Solve() {
+func (s *Solution) Solve(feasibleTestsEnabled bool) {
 	start := time.Now()
-	var k int16
-	var j int16
+	var k int
+	var j int
 
-	before := make([]map[int16]bool, s.N)
+	before := make([]map[int]bool, s.N)
 
 	for j = 0; j < s.N; j++ {
-		before[j] = map[int16]bool{}
+		before[j] = map[int]bool{}
 	}
+	if feasibleTestsEnabled {
+		for j = 0; j < s.N; j++ {
+			timeWindowJ := s.TimeWindows[j]
 
-	for j = 0; j < s.N; j++ {
-		timeWindowJ := s.TimeWindows[j]
-
-		//Test #2: BEFORE function implementation
-		for k = 0; k < s.N; k++ {
-			if j != k {
-				timeWindowK := s.TimeWindows[k]
-				distance := s.Graph.GetDistance(k, j)
-				if distance != entities.PRUNED && timeWindowK.Start+distance > timeWindowJ.End {
-					before[k][j] = true
+			//Test #2: BEFORE function implementation
+			for k = 0; k < s.N; k++ {
+				if j != k {
+					timeWindowK := s.TimeWindows[k]
+					distance := s.Graph.GetDistance(k, j)
+					if distance != entities.PRUNED && timeWindowK.Start+distance > timeWindowJ.End {
+						before[k][j] = true
+					}
 				}
 			}
 		}
@@ -211,12 +224,13 @@ func (s *Solution) Solve() {
 
 	// Initialize ξ1={({1},1,0)} and F({1},1,0)= 0
 	epsilonKminusone := make([]Epsilon, 0)
-	epsilonKminusone = append(epsilonKminusone, Epsilon{Set: Set{Mapa: map[int16]bool{0: true}, N: s.N, Elems: 1, Camino: ""}, I: 0, T: 0})
+	initialSet := Set{Mapa: new(bit.Set).Add(0), N: s.N, Elems: 1, Camino: ""}
+	epsilonKminusone = append(epsilonKminusone, Epsilon{Set: &initialSet, I: 0, T: 0})
 
 	epsilonsK := make([]Epsilon, 0)
 
 	F := FType{mapa: map[string]float32{}, N: s.N, Result: map[string][]TType{}}
-	F.Set(&epsilonKminusone[0].Set, 0, 0, 0)
+	F.Set(epsilonKminusone[0].Set, 0, 0, 0)
 
 	notFeasible := 0
 
@@ -225,6 +239,7 @@ func (s *Solution) Solve() {
 	// for(k=2,3,…..n) do
 	for k = 1; k < s.N; k++ {
 		epslionsMap := map[string]Epsilon{}
+		_ = map[string]Epsilon{}
 		epsilonsK = make([]Epsilon, 0, s.N)
 		// for (𝑆, 𝑖, 𝑡) ∈ ξk-1 do
 		for epsK := range epsilonKminusone {
@@ -235,49 +250,60 @@ func (s *Solution) Solve() {
 					// add the state (𝑆′,𝑗,𝑡′) to ξk only if (𝑆′,𝑗,𝑡′) passes elimination tests
 					feasible := true
 
-					// Test #2
-					beforeJ := before[j]
-					for tmp := range beforeJ {
-						if _, ok := epsilonK.Set.Mapa[tmp]; !ok {
-							feasible = false
-							break
+					if feasibleTestsEnabled {
+						// Test #2
+						beforeJ := before[j]
+						for tmp := range beforeJ {
+							if ok := epsilonK.Set.Mapa.Contains(tmp); !ok {
+								feasible = false
+								break
+							}
+						}
+
+						if !feasible {
+							notFeasible++
+							continue
 						}
 					}
 
-					if !feasible {
-						notFeasible++
-						continue
-					}
+					//fmt.Println("antes  ", epsilonK.Set.GetStrRep(), epsilonK.I, j)
+
 					epsilonCopy := epsilonK.Copy()
 					Sprime, ok := epsilonCopy.Set.Add(j)
 
 					// add the state (𝑆′,𝑗,𝑡′) to ξk only if (𝑆′,𝑗,𝑡′) passes elimination tests
 					if ok {
+						//fmt.Println("despues", epsilonK.Set.GetStrRep())
+						//fmt.Println("prime  ", Sprime.GetStrRep())
+
 						Tprime := utils.Max(s.TimeWindows[j].Start, epsilonK.T+distance)
 
 						timeW := s.TimeWindows[j]
 
 						// add the state (𝑆′,𝑗,𝑡′) to ξk only if (𝑆′,𝑗,𝑡′) passes elimination tests
 						if timeW.Start <= Tprime && Tprime <= timeW.End {
-							fResult := F.Get(&epsilonK.Set, epsilonK.I, epsilonK.T) + distance
+							fResult := F.Get(epsilonK.Set, epsilonK.I, epsilonK.T) + distance
 
 							// Dominance test
 							feasible := true
+							if feasibleTestsEnabled {
+								existentEps, ok := epslionsMap[Sprime.GetStrRep()]
+								if ok {
+									//log.Println("factible? ", existentEps.T, Tprime, fResult)
+									if existentEps.T <= Tprime && F.Get(existentEps.Set, existentEps.I, existentEps.T) <= fResult {
+										feasible = false
 
-							existentEps, ok := epslionsMap[Sprime.GetStrRep()]
-							if ok {
-								if existentEps.T <= Tprime && F.Get(&existentEps.Set, existentEps.I, existentEps.T) <= fResult {
-									feasible = false
-
-									break
+										break
+									}
 								}
 							}
 
 							if feasible {
-								feasibleEpsilon := Epsilon{Set: Sprime, I: j, T: Tprime}
+								feasibleEpsilon := Epsilon{Set: &Sprime, I: j, T: Tprime}
 
 								// update 𝐹(𝑆′,𝑗,𝑡′) = 𝐹(𝑆,𝑖,𝑡) + 𝑐𝑖𝑗 (𝑐𝑖𝑗 is already included in T𝑖𝑗)
 								F.Set(&Sprime, j, Tprime, fResult)
+								//log.Println(Sprime, j, Tprime, fResult)
 
 								epsilonsK = append(epsilonsK, feasibleEpsilon)
 
@@ -288,7 +314,7 @@ func (s *Solution) Solve() {
 				}
 			}
 		}
-		//fmt.Println("epslions[", k, "]: ", toString(epslions[k]))
+		fmt.Println("epslions[", k, "]: ", toString(epsilonsK))
 		fmt.Println(time.Since(start).Milliseconds(), "ms  --  epslions[", k, "]: ", len(epsilonsK), "no feasible sols:", notFeasible)
 		epsilonKminusone = epsilonsK
 	}
@@ -314,11 +340,12 @@ func (s *Solution) Solve() {
 
 	fmt.Println(mejorCamino)
 	fmt.Println(result)
+	fmt.Printf("%.2f\n", result)
 }
 
-func GenerateStrRepForN(N int16) string {
+func GenerateStrRepForN(N int) string {
 	var sb strings.Builder
-	var i int16
+	var i int
 	for i = 0; i < N; i++ {
 		fmt.Fprintf(&sb, "%t_", true)
 	}
