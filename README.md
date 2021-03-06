@@ -20,6 +20,7 @@ go run main.go <file name> <timeout>
 ```
 
 `<file name>` refers to the testcase to be used. Testcases are placed in the `testdata` folder.
+
 `<timeout>` refers to the time limit the implementation has to return an answer in milliseconds.
 
 ## Built with 🛠️
