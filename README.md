@@ -2,7 +2,7 @@
 
 _A simple dynamic programming implementation for the TSPTW problem_
 
-For more information about the implementation feel free to read the associated article located in the article/ folder.
+For more information about the implementation feel free to read the associated article located in the `article` folder.
 
 ### Pre-requisites 📋
 
@@ -16,11 +16,11 @@ _You can clone the project and run it by yourself using the following command_
 
 
 ```
-go run main.go <file name> <timeout (ms)
+go run main.go <file name> <timeout>
 ```
 
-<file name> refers to the testcase to be used. Testcases are placed in testdata/ folder.
-<timeout> refers to the time limit the implementation has to return an answer in milliseconds.
+`<file name>` refers to the testcase to be used. Testcases are placed in the `testdata` folder.
+`<timeout>` refers to the time limit the implementation has to return an answer in milliseconds.
 
 ## Built with 🛠️
 
