@@ -1,324 +1,225 @@
 package main
 
-//Documentation: http://cse.iitkgp.ac.in/~yeteshc/OR_final.pdf
-
 import (
 	"context"
-	"encoding/json"
-	"first-try-tsptw/entities"
-	"first-try-tsptw/utils"
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
-	"sync"
 	"time"
+
+	"alda-tsptw-implementation/entities"
+	"alda-tsptw-implementation/utils"
+
+	"github.com/yourbasic/bit"
 )
 
-type TimeWindows struct {
+type TimeWindow struct {
 	Start float32
 	End   float32
 }
 
 type Solution struct {
-	Graph       entities.Graph
-	TimeWindows []TimeWindows
-	N           int16
+	Graph      entities.Graph
+	TimeWindow []TimeWindow
+	N          int
+	CaseName   string
+	Before     []map[int]bool
 }
-
-type Set struct {
-	Mapa   map[int16]bool
-	strRep string
-	N      int16
-	Elems  int16
-	Camino string
-}
-
-func (e *Set) Copy() Set {
-	copiedMap := make(map[int16]bool, len(e.Mapa))
-	for k, v := range e.Mapa {
-		copiedMap[k] = v
-	}
-
-	return Set{
-		Mapa:   copiedMap,
-		N:      e.N,
-		Elems:  e.Elems,
-		Camino: e.Camino,
-	}
-}
-
-type Epsilon struct {
-	Set Set
-	I   int16
-	T   float32
-}
-
-func (e *Epsilon) Copy() Epsilon {
-	return Epsilon{
-		Set: e.Set.Copy(),
-		I:   e.I,
-		T:   e.T,
-	}
-}
-
-type TType struct {
-	T      float32
-	Value  float32
-	Camino string
-}
-
-type FType struct {
-	mapa   map[string]float32
-	N      int16
-	Result map[string][]TType
-}
-
-func (f *FType) Set(s *Set, i int16, t float32, value float32) {
-	f.mapa[fmt.Sprintf("%s_%d_%f", s.GetStrRep(), i, t)] = value
-	if s.Elems == f.N {
-		key := fmt.Sprintf("%s_%d", s.GetStrRep(), i)
-		res, ok := f.Result[key]
-		if !ok {
-			res = make([]TType, 0)
-		}
-		res = append(res, TType{T: t, Value: value, Camino: s.Camino})
-		f.Result[key] = res
-	}
-}
-
-func (f *FType) Get(s *Set, i int16, t float32) float32 {
-	return f.mapa[fmt.Sprintf("%s_%d_%f", s.GetStrRep(), i, t)]
-}
-
-func (s *Set) GetStrRep() string {
-	s.GenerateStrRep()
-	if s.strRep == "" {
-		s.GenerateStrRep()
-	}
-
-	return s.strRep
-}
-
-func (s *Set) GenerateStrRep() {
-	var sb strings.Builder
-	var i int16
-	for i = 0; i < s.N; i++ {
-		fmt.Fprintf(&sb, "%t_", s.Mapa[i])
-	}
-	s.strRep = sb.String()
-	//fmt.Println(s.strRep)
-}
-
-func (s Set) Remove(i int16) (Set, bool) {
-	_, ok := s.Mapa[i]
-	if ok {
-		s.Mapa[i] = false
-		s.GenerateStrRep()
-		s.Elems--
-	}
-
-	return s, ok
-}
-
-func (s Set) Add(i int16) (Set, bool) {
-	_, ok := s.Mapa[i]
-	if !ok {
-		s.Mapa[i] = true
-		s.GenerateStrRep()
-		s.Elems++
-		s.Camino = fmt.Sprintf("%s %d", s.Camino, i)
-	}
-
-	return s, !ok
-}
-
-const service int16 = 0
 
 func main() {
-	var i, j, n int16
+	if len(os.Args) < 3 {
+		fmt.Printf("Missing parameters.\n\nusage: go run main.go <file name> <timeout (ms)>\n\n")
+		os.Exit(1)
+	}
+	fileName := os.Args[1]
+	timeLimit, _ := strconv.Atoi(os.Args[2])
+
+	r, err := os.Open("testdata/" + fileName)
+	if err != nil {
+		fmt.Println("Error reading file:", err)
+		fmt.Printf("Tip: <fileName> must not contain its path.\n\n")
+		os.Exit(2)
+	}
+
+	var i, j, n int
 	var start, end float32
-	fmt.Scanf("%d", &n)
+	fmt.Fscanf(r, "%d", &n)
+
 	distances := make([][]float32, n)
-	timeWindows := make([]TimeWindows, n)
+	timeWindows := make([]TimeWindow, n)
+	before := make([]map[int]bool, n)
+
 	for i = 0; i < n; i++ {
 		distances[i] = make([]float32, n)
+		before[i] = map[int]bool{}
 		for j = 0; j < n; j++ {
-			fmt.Scanf("%f", &distances[i][j])
+			fmt.Fscanf(r, "%f", &distances[i][j])
 		}
 	}
-	/**
-	for i = 0; i < n; i++ {
-		for j = 0; j < n; j++ {
-			fmt.Printf("%f ", distances[i][j])
-		}
-		fmt.Println()
-	}
-	**/
+
 	graph := entities.Graph{TravelTime: distances, N: n}
 
 	for i = 0; i < n; i++ {
-		fmt.Scanf("%f %f\n", &start, &end)
-		timeWindows[i] = TimeWindows{Start: start, End: end}
+		fmt.Fscanf(r, "%f %f\n", &start, &end)
+		timeWindows[i] = TimeWindow{Start: start, End: end}
 	}
 
-	solution := Solution{Graph: graph, TimeWindows: timeWindows, N: n}
+	solution := Solution{Graph: graph, TimeWindow: timeWindows, N: n, CaseName: fileName, Before: before}
 
-	/**
-	for i = 0; i < n; i++ {
-		fmt.Printf("%f %f\n", timeWindows[i].Start, timeWindows[i].End)
-	}
-	**/
-
-	wb := sync.WaitGroup{}
-	for i = 0; i < n; i++ {
-		wb.Add(1)
-		solution.Prune(i, &wb)
-	}
-	wb.Wait()
-	_, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-
-	_, err := executeWithTimeout(context.Background(), "solve", func() {
+	_, _ = executeWithTimeout(context.Background(), "solve", func() {
 		solution.Solve()
-	}, 300000*time.Millisecond)
-
-	fmt.Println(err)
-
-}
-
-func (s *Solution) Prune(i int16, wb *sync.WaitGroup) {
-	var j int16
-	for j = 0; j < s.N; j++ {
-		travelTimeI := s.TimeWindows[i]
-		travelTimeJ := s.TimeWindows[j]
-		if s.Graph.GetDistance(i, j)+travelTimeI.Start > travelTimeJ.End {
-			s.Graph.Prune(i, j)
-			// fmt.Printf("Arc %d %d PRUNEDDD\n", i, j)
-		}
-	}
-	wb.Done()
+	}, time.Duration(timeLimit)*time.Millisecond)
 }
 
 func (s *Solution) Solve() {
-	var k int16
-	var j int16
+	var k int
+	var j int
+
+	for j = 0; j < s.N; j++ {
+		timeWindowJ := s.TimeWindow[j]
+
+		//Test #2: BEFORE function implementation
+		for k = 0; k < s.N; k++ {
+			if j != k {
+				timeWindowK := s.TimeWindow[k]
+				distance := s.Graph.GetDistance(k, j)
+				if distance != entities.PRUNED && timeWindowK.Start+distance > timeWindowJ.End {
+					s.Before[k][j] = true
+				}
+			}
+		}
+	}
 
 	// Initialize ξ1={({1},1,0)} and F({1},1,0)= 0
-	epslions := make([][]Epsilon, s.N)
-	epslions = append(epslions, make([]Epsilon, 0))
-	epslions[0] = append(epslions[0], Epsilon{Set: Set{Mapa: map[int16]bool{0: true}, N: s.N, Elems: 1, Camino: ""}, I: 0, T: 0})
+	epsilonKminusone := make([]entities.Epsilon, 0)
+	initialSet := entities.Set{Mapa: new(bit.Set).Add(0), N: s.N, Elems: 1, Camino: "0 "}
+	epsilonKminusone = append(epsilonKminusone, entities.Epsilon{Set: &initialSet, I: 0, T: 0})
 
-	F := FType{mapa: map[string]float32{}, N: s.N, Result: map[string][]TType{}}
-	F.Set(&epslions[0][0].Set, 0, 0, 0)
+	epsilonsK := make([]entities.Epsilon, 0)
 
-	fmt.Println("epslions[", 0, "]: ", epslions[0])
+	F := entities.FType{Mapa: map[string]float32{}, N: s.N, Result: map[string][]entities.TType{}}
+	F.Set(epsilonKminusone[0].Set, 0, 0, 0)
 
 	// for(k=2,3,…..n) do
 	for k = 1; k < s.N; k++ {
-		epslionsMap := map[string][]Epsilon{}
-		epslions[k] = make([]Epsilon, 0, s.N)
+		epslionsMap := map[string]entities.Epsilon{}
+		epsilonsK = make([]entities.Epsilon, 0, s.N)
+
 		// for (𝑆, 𝑖, 𝑡) ∈ ξk-1 do
-		for epsK := range epslions[k-1] {
-			epsilonK := epslions[k-1][epsK]
+		for epsK := range epsilonKminusone {
+			epsilonK := epsilonKminusone[epsK]
 			for j = 0; j < s.N; j++ {
 				distance := s.Graph.GetDistance(epsilonK.I, j)
 				if epsilonK.I != j && distance > entities.PRUNED {
-					//fmt.Println("antes  ", epsilonK.Set.GetStrRep(), epsilonK.I, j)
-					epsilonCopy := epsilonK.Copy()
-					Sprime, ok := epsilonCopy.Set.Add(j)
+
+					// add the state (𝑆′,𝑗,𝑡′) to ξk only if (𝑆′,𝑗,𝑡′) passes elimination tests
+					feasible := true
+
+					// Test #2
+					beforeJ := s.Before[j]
+					for tmp := range beforeJ {
+						if ok := epsilonK.Set.Mapa.Contains(tmp); !ok {
+							feasible = false
+							break
+						}
+					}
+
+					if !feasible {
+						continue
+					}
+
+					newEpsilon := epsilonK.Copy()
+					Sprime, ok := newEpsilon.Set.Add(j)
 
 					// add the state (𝑆′,𝑗,𝑡′) to ξk only if (𝑆′,𝑗,𝑡′) passes elimination tests
 					if ok {
-						//fmt.Println("despues", epsilonK.Set.GetStrRep())
-						//fmt.Println("prime  ", Sprime.GetStrRep())
-						Tprime := utils.Max(s.TimeWindows[j].Start, epsilonK.T+distance)
-
-						timeW := s.TimeWindows[j]
+						Tprime := utils.Max(s.TimeWindow[j].Start, epsilonK.T+distance)
+						timeW := s.TimeWindow[j]
 
 						// add the state (𝑆′,𝑗,𝑡′) to ξk only if (𝑆′,𝑗,𝑡′) passes elimination tests
 						if timeW.Start <= Tprime && Tprime <= timeW.End {
-							// TODO elimination tests
-							fResult := F.Get(&epsilonK.Set, epsilonK.I, epsilonK.T) + distance
+							fResult := F.Get(epsilonK.Set, epsilonK.I, epsilonK.T) + distance
 
-							// Dominance test
-							existentEpsilonsForSet, ok := epslionsMap[Sprime.GetStrRep()]
-							feasible := true
+							// Modified dominance test
+							feasible = true
+							existentEps, ok := epslionsMap[Sprime.GetStrRep()]
 							if ok {
-								for _, existent := range existentEpsilonsForSet {
-									if existent.T <= Tprime && F.Get(&existent.Set, existent.I, existent.T) <= fResult {
-										feasible = false
+								if existentEps.T <= Tprime && F.Get(existentEps.Set, existentEps.I, existentEps.T) <= fResult {
+									feasible = false
 
-										break
-									}
+									break
 								}
 							}
 
 							if feasible {
-								feasibleEpsilon := Epsilon{Set: Sprime, I: j, T: Tprime}
+								feasibleEpsilon := entities.Epsilon{Set: &Sprime, I: j, T: Tprime}
 
-								// update 𝐹(𝑆′,𝑗,𝑡′) = 𝐹(𝑆,𝑖,𝑡) + 𝑐𝑖𝑗 (𝑐𝑖𝑗 = 0)
+								// update 𝐹(𝑆′,𝑗,𝑡′) = 𝐹(𝑆,𝑖,𝑡) + 𝑐𝑖𝑗 (𝑐𝑖𝑗 is already included in T𝑖𝑗)
 								F.Set(&Sprime, j, Tprime, fResult)
 
-								epslions[k] = append(epslions[k], feasibleEpsilon)
+								epsilonsK = append(epsilonsK, feasibleEpsilon)
 
-								res, ok := epslionsMap[Sprime.GetStrRep()]
-								if !ok {
-									res = make([]Epsilon, 0)
-								}
-								res = append(res, feasibleEpsilon)
-
-								epslionsMap[Sprime.GetStrRep()] = res
+								epslionsMap[Sprime.GetStrRep()] = feasibleEpsilon
 							}
-
-						} else {
-							//fmt.Println("JAJAJAJA CAPULLO, este camino no sirve ", Sprime.Camino)
 						}
 					}
 				}
 			}
 		}
-
-		//fmt.Println("epslions[", k, "]: ", toString(epslions[k]))
+		epsilonKminusone = epsilonsK
 	}
 
-	fmt.Println("Resultado: ", toString(F.Result))
-
 	NMap := GenerateStrRepForN(s.N)
-	var result float32 = 1000000
+
+	var result float32 = 10000000000000
+	var bestPath string
 
 	for j = 0; j < s.N; j++ {
 		distance := s.Graph.GetDistance(j, 0)
 		if distance > entities.PRUNED {
-			timeW := s.TimeWindows[j]
+			timeW := s.TimeWindow[j]
 			for _, tmp := range F.Result[fmt.Sprintf("%s_%d", NMap, j)] {
 				if timeW.Start <= tmp.T && tmp.T <= timeW.End && tmp.Value+distance < result {
 					result = tmp.Value + distance
-					fmt.Println(tmp.Camino)
+					bestPath = tmp.Camino
 				}
 			}
 		}
 	}
 
-	fmt.Println(result)
+	// Generar tour en base al makespan
+	path := strings.Split(bestPath, " ")
+	var elapsed float32 = 0.0
+	if len(path) > 0 {
+		prev, _ := strconv.Atoi(path[0])
+		for i := 1; i < len(path); i++ {
+			curr, _ := strconv.Atoi(path[i])
+			elapsed += s.Graph.GetDistance(prev, curr)
+			prev = curr
+		}
+	}
+
+	if elapsed != 0.0 {
+		result = elapsed
+	} else {
+		// Solución no encontrada
+		result = -1
+	}
+
+	fmt.Printf("instance: %s\n", s.CaseName)
+	fmt.Printf("Cost: %.2f\n", result)
+	fmt.Printf("Permutation: %s\n", bestPath)
 }
 
-func GenerateStrRepForN(N int16) string {
+func GenerateStrRepForN(N int) string {
 	var sb strings.Builder
-	var i int16
+	var i int
 	for i = 0; i < N; i++ {
 		fmt.Fprintf(&sb, "%t_", true)
 	}
-	// fmt.Println("N str", sb.String())
 
 	return sb.String()
-}
-
-func toString(i interface{}) string {
-	b, err := json.Marshal(&i)
-	if err != nil {
-		fmt.Println(err)
-		return ""
-	}
-	return string(b)
 }
 
 func executeWithTimeout(ctx context.Context, name string, cb func(), timeout time.Duration) (interface{}, error) {
@@ -333,7 +234,6 @@ func executeWithTimeout(ctx context.Context, name string, cb func(), timeout tim
 	c, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	start := time.Now()
 	go func() {
 		cb()
 
@@ -350,10 +250,13 @@ func executeWithTimeout(ctx context.Context, name string, cb func(), timeout tim
 		resp = msg.payload
 		err = msg.err
 	case <-c.Done():
-		err = fmt.Errorf("timeout executing %s", name)
+		err = fmt.Errorf("timeout executing %s procedure", name)
 	}
 
-	fmt.Println("time elapsed:", time.Since(start).Milliseconds(), "ms.")
+	if err != nil {
+		fmt.Println(err)
+	}
+
 	return resp, err
 }
 
